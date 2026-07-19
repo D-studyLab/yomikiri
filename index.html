@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ヨミキリ｜AIがあなたの癖を学習する限定ジャンケン賭博</title>
+<style>
+  :root { --bg:#0a0a0d; --panel:#14141a; --line:#2a2a35; --txt:#e8e6e0; --sub:#8a8a96;
+          --red:#c02a2a; --gold:#d4a437; --good:#5fba7d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:"Segoe UI","Yu Gothic UI",Meiryo,sans-serif; line-height:1.6; }
+  body.declared { animation: pulse 1.1s infinite; }
+  @keyframes pulse { 0%,100% { background:#0a0a0d; } 50% { background:#180a0d; } }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 14px; }
+  h1 { font-size: 30px; text-align:center; margin: 14px 0 2px; letter-spacing:.35em; color:var(--gold);
+       text-shadow: 0 0 18px rgba(212,164,55,.35); }
+  .sub { color: var(--sub); font-size: 13px; text-align:center; margin-bottom: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  button { background: var(--red); color: #fff; border: 0; border-radius: 9px; padding: 10px 18px;
+           font-size: 15px; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--gold); border: 1px solid var(--gold); }
+  button:disabled { opacity: .35; cursor: default; }
+  button:active { transform: scale(.97); }
+  .big { font-size: 17px; width: 100%; margin: 5px 0; padding: 13px; text-align:left;
+         display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .big small { flex-shrink:0; }
+  .rules { font-size: 13.5px; }
+  .rules ul { margin: 6px 0 0; padding-left: 1.3em; }
+  .rules li { margin-bottom: 6px; }
+  .cfgrow { margin-top: 8px; }
+  .cfgdesc { color: var(--sub); font-size: 12.5px; margin: 4px 0 0 2px; }
+  .screen { display:none; } .screen.on { display:block; }
+  .chips { letter-spacing: 2px; font-size: 15px; }
+  .chips b { color: var(--gold); font-size: 19px; }
+  .cardrow { display:flex; gap:10px; justify-content:center; margin:8px 0; }
+  .card { flex:0 1 110px; font-size:30px; padding:12px 0 6px; text-align:center; background:#1b1b24;
+          border:1px solid var(--line); border-radius:12px; color:var(--txt); }
+  .card small { display:block; font-size:12px; color:var(--sub); }
+  .card:not(:disabled):hover { border-color: var(--gold); }
+  .aicards { display:flex; gap:8px; justify-content:center; font-size:14px; color:var(--sub); flex-wrap:wrap; }
+  .bubble { position:relative; background:#101017; border:1px solid var(--line); border-radius:12px;
+            padding:10px 14px; min-height:3.4em; font-size:15px; margin-top:8px; }
+  .bubble.declare { border-color: var(--red); color:#ffb0b0; box-shadow: 0 0 24px rgba(192,42,42,.25); }
+  .yomi { font-size:13px; color:var(--sub); border-left:3px solid var(--gold); padding-left:10px; margin-top:8px; min-height:2.4em; }
+  .commit { font-family: ui-monospace, Consolas, monospace; font-size:11.5px; color:var(--gold);
+            background:#101017; border:1px dashed var(--gold); border-radius:8px; padding:6px 10px; margin-top:8px;
+            overflow-wrap: anywhere; }
+  .commit details { color: var(--sub); } .commit summary { cursor:pointer; }
+  .pot { text-align:center; font-size:14px; color:var(--sub); }
+  .pot b { color: var(--gold); font-size: 20px; }
+  .reveal { display:flex; justify-content:center; align-items:center; gap:22px; font-size:44px; min-height:70px; }
+  .reveal .vs { font-size:16px; color:var(--sub); }
+  .resline { text-align:center; font-size:17px; min-height:1.8em; font-weight:bold; }
+  .resline.w { color: var(--good); } .resline.l { color: #ff8a8a; } .resline.d { color: var(--sub); }
+  .betrow { display:flex; gap:8px; justify-content:center; align-items:center; font-size:14px; color:var(--sub); flex-wrap:wrap; }
+  .betrow button { padding:4px 12px; font-size:15px; background:#1b1b24; border:1px solid var(--line); color:var(--txt); }
+  .betrow button.sel { border-color:var(--gold); color:var(--gold); }
+  .hab { font-size:14px; }
+  .hab td { padding:3px 10px 3px 0; border:0; }
+  .note { font-size:12px; color:var(--sub); margin-top:14px; border-top:1px solid var(--line); padding-top:10px; }
+  .locked { opacity:.45; }
+  #roundno { color:var(--gold); }
+  @media (max-width: 430px) {
+    h1 { font-size: 24px; letter-spacing: .22em; }
+    .wrap { padding: 10px; }
+    .panel { padding: 11px; }
+    button.big { font-size: 15px; padding: 12px 10px; flex-wrap: wrap; }
+    .card { flex: 1 1 30%; font-size: 26px; padding: 10px 0 5px; }
+    .cardrow { gap: 7px; }
+    .reveal { font-size: 36px; gap: 14px; min-height: 56px; }
+    .chips { font-size: 13px; } .chips b { font-size: 17px; }
+    .bubble { font-size: 14px; }
+    .commit { font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ヨ ミ キ リ</h1>
+  <div class="sub">AIがあなたの癖をその場で学習する、限定ジャンケン賭博。すべて端末内・送信なし。</div>
+
+  <!-- ===== title ===== -->
+  <div class="screen on" id="scr-title">
+    <div class="panel">
+      <button class="big" onclick="startMatch('deku')">🐣 見習いデク — 数を数えるだけの小心者<small id="rec-deku" style="float:right;color:var(--sub)"></small></button>
+      <button class="big" id="btn-satori" onclick="startMatch('satori')">👁 中堅サトリ — 試合中にあなたの癖を学習する<small id="rec-satori" style="float:right;color:var(--sub)"></small></button>
+      <button class="big" id="btn-laplace" onclick="startMatch('laplace')">😈 悪魔ラプラス — 全対戦を記憶し、あなた専用に育つ<small id="rec-laplace" style="float:right;color:var(--sub)"></small></button>
+      <div style="text-align:center;margin-top:6px">
+        <button class="ghost" id="sndbtn" onclick="toggleSnd()">🔊 効果音: ON</button>
+        <button class="ghost" onclick="resetLaplace()" id="lapreset">😈 ラプラスの記憶を消す</button>
+      </div>
+    </div>
+    <div class="panel rules">
+      <b style="color:var(--txt);font-size:15px">📜 ルール</b>
+      <ul>
+        <li><b>手札</b>: ✊✌️🖐 合計12枚の消費制。出した札は戻らない。<b>残り札はお互いに全公開</b>——相手の札を数えるのも実力のうち</li>
+        <li><b>チップ</b>: お互い10枚スタート。毎ラウンド、ベット額（1〜3）を決めてから手を出す。AIも同額を賭け、<b>勝った方がポットを総取り</b></li>
+        <li><b>あいこ</b>: ポットは次のラウンドに持ち越し。ただし<b>札だけは減る</b>——あいこは消耗</li>
+        <li><b style="color:#ffb0b0">ヨミキリ宣言</b>: AIは読みに自信があるとき、あなたが出す<b>前</b>に宣言してくる（画面が赤く脈打つ）。宣言ラウンドは大勝負——<b>読み切られて負けると追加で2枚</b>毟られ、<b>裏をかいて勝てば追加で2枚</b>奪える</li>
+        <li><b>決着</b>: どちらかのチップが尽きるか、規定ラウンド終了時に多い方の勝ち。途中で「降りる」こともできる</li>
+        <li><b>AIの読みの開示</b>: 毎ラウンド後、AIが「何を根拠にその手を読んだか」をあなたの実際の統計で見せてくる。<b>読まれないように打て</b></li>
+      </ul>
+    </div>
+    <div class="panel rules">
+      <b style="color:var(--txt);font-size:15px">⚙ ルール設定</b>
+      <div class="cfgrow">
+        <div class="betrow" style="justify-content:flex-start">配札:
+          <button id="deal-even" onclick="setCfg('deal','even')">均等 4-4-4</button>
+          <button id="deal-random" onclick="setCfg('deal','random')">ランダム</button>
+        </div>
+        <div class="cfgdesc"><b>均等</b>=✊✌️🖐が4枚ずつの基本形。<b>ランダム</b>=12枚の内訳を運任せで配る（各1〜7枚・配られた内容はお互い公開）。「グーが7枚来た…」という歪んだ手札をどう凌ぐかの勝負になる</div>
+      </div>
+      <div class="cfgrow">
+        <div class="betrow" style="justify-content:flex-start">ラウンド:
+          <button id="rounds-12" onclick="setCfg('rounds',12)">12R 使い切り</button>
+          <button id="rounds-10" onclick="setCfg('rounds',10)">10R 余らせ</button>
+        </div>
+        <div class="cfgdesc"><b>12R</b>=12枚を全部使い切る。終盤は残り札から手がバレる「詰み」の恐怖がある。<b>10R</b>=12枚配られるが10ラウンドで終了＝<b>2枚は最後まで隠し持てる</b>。終盤も手の内が確定せず、読み合いが最後まで続く</div>
+      </div>
+      <div style="color:var(--gold);font-size:12.5px;margin-top:4px" id="cfgnote"></div>
+    </div>
+  </div>
+
+  <!-- ===== match ===== -->
+  <div class="screen" id="scr-match">
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><b id="bossname"></b><span style="color:var(--sub);font-size:13px">　ラウンド <span id="roundno">1</span>/<span id="roundmax">12</span></span></div>
+        <button class="ghost" style="padding:4px 10px;font-size:12px" onclick="giveUp()">降りる</button>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px">
+        <div class="chips">AI <b id="achips">10</b>枚</div>
+        <div class="pot">ポット <b id="pot">0</b></div>
+        <div class="chips">あなた <b id="pchips">10</b>枚</div>
+      </div>
+      <div class="aicards" id="aicards"></div>
+      <div class="bubble" id="bossbubble"></div>
+      <div class="yomi" id="yomibox"></div>
+      <div class="commit" id="commitbox"></div>
+    </div>
+    <div class="panel">
+      <div class="reveal" id="reveal"><span class="vs">— 手を選べ —</span></div>
+      <div class="resline" id="resline"></div>
+      <div class="betrow" id="betrow">ベット:
+        <button id="bet1" class="sel" onclick="setBet(1)">1</button>
+        <button id="bet2" onclick="setBet(2)">2</button>
+        <button id="bet3" onclick="setBet(3)">3</button>
+      </div>
+      <div class="cardrow">
+        <button class="card" id="c0" onclick="playCard(0)">✊<small>グー ×4</small></button>
+        <button class="card" id="c1" onclick="playCard(1)">✌️<small>チョキ ×4</small></button>
+        <button class="card" id="c2" onclick="playCard(2)">🖐<small>パー ×4</small></button>
+      </div>
+      <div style="text-align:center"><button id="nextbtn" style="display:none" onclick="nextRound()">次のラウンドへ</button></div>
+    </div>
+  </div>
+
+  <!-- ===== result ===== -->
+  <div class="screen" id="scr-result">
+    <div class="panel" style="text-align:center">
+      <h2 id="res-title" style="margin:4px 0"></h2>
+      <div id="res-body" style="font-size:15px"></div>
+    </div>
+    <div class="panel">
+      <b>📊 あなたの癖レポート</b>（このAIが実際に見ていたもの）
+      <table class="hab" id="habits"></table>
+      <div style="text-align:center;margin-top:10px">
+        <button onclick="location.reload()">タイトルへ</button>
+        <button class="ghost" onclick="rematch()">再戦</button>
+        <button class="ghost" onclick="copyHabits()">レポートをコピー</button>
+      </div>
+      <div id="copied" style="text-align:center;font-size:12px;color:var(--sub)"></div>
+    </div>
+  </div>
+
+  <div class="note">
+    <details>
+      <summary style="cursor:pointer">🔧 おまけ: 仕組みの話（読まなくても遊べます）</summary>
+      <div style="margin-top:6px">
+        <b>AIはどう読んでいる？</b> あなたの直近の手・負けた後の反応・残り札などをニューラルネットに入れ、毎ラウンド本物の機械学習（勾配降下法）で学習しています。開示される「読みの根拠」は実際の統計そのまま。悪魔ラプラスは全対戦をこの端末の中に記憶します。<br>
+        <b>後出ししていない証拠は？</b> 対戦画面の🔒は、AIの「手＋読み＋確信度＋乱数」をあなたが出す<b>前</b>に封印したSHA-256ハッシュ。ラウンド後の🔓が元の文字列です（ai/yomiの数字: 0=グー 1=チョキ 2=パー）。疑うなら🔒を控えて、🔓の文字列を自分でSHA-256にかけてみてください。一致する＝出す前から手が固定されていた証明です。<br>
+        <b>バランスは？</b> 5種類の打ち方のボット×数千試合のシミュレーションで検証済み（癖のない打ち方には勝率50%、癖があると搾られる）。<br>
+        すべて端末内で完結・送信なし。／ D-studyLab
+      </div>
+    </details>
+  </div>
+</div>
+
+<script src="cnn.js"></script>
+<script src="sha256.js"></script>
+<script src="yomi_ai.js"></script>
+<script>
+"use strict";
+const Y = YomiAI;
+const $ = id => document.getElementById(id);
+const store = JSON.parse(localStorage.getItem('yomikiri') || '{"rec":{},"snd":true}');
+store.cfg = store.cfg || { deal: 'even', rounds: 12 };
+function save() { try { localStorage.setItem('yomikiri', JSON.stringify(store)); } catch (e) {} }
+function setCfg(k, v) { store.cfg[k] = v; save(); renderCfg(); }
+function renderCfg() {
+  const c = store.cfg;
+  for (const [id, on] of [['deal-even', c.deal === 'even'], ['deal-random', c.deal === 'random'],
+                          ['rounds-12', c.rounds === 12], ['rounds-10', c.rounds === 10]])
+    document.getElementById(id).classList.toggle('sel', on);
+  document.getElementById('cfgnote').textContent =
+    (c.deal === 'random' ? '配札ガチャ: 互いに12枚をランダム配分（各1〜7枚・公開）。' : '') +
+    (c.rounds === 10 ? '10Rモード: 12枚配布で10ラウンド＝2枚余らせてよい。最後まで手の内が確定しない。' : '');
+}
+const rng = Y.mulberry32(Date.now() >>> 0);
+
+// ---------- sound ----------
+let AC = null;
+function ac() { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
+  if (AC.state === 'suspended') AC.resume(); return AC; }
+function tone(f, t0, dur, type, vol, slide) {
+  if (store.snd === false) return;
+  try { const a = ac(), o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'sine'; o.frequency.setValueAtTime(f, a.currentTime + t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, a.currentTime + t0 + dur);
+    g.gain.setValueAtTime(0, a.currentTime + t0);
+    g.gain.linearRampToValueAtTime(vol || .12, a.currentTime + t0 + .01);
+    g.gain.exponentialRampToValueAtTime(.001, a.currentTime + t0 + dur);
+    o.connect(g); g.connect(a.destination); o.start(a.currentTime + t0); o.stop(a.currentTime + t0 + dur + .05);
+  } catch (e) {}
+}
+function snd(n) {
+  if (n === 'win') [392, 523, 659].forEach((f, i) => tone(f, i * .07, .2, 'triangle', .14));
+  else if (n === 'lose') tone(150, 0, .35, 'sawtooth', .09, 90);
+  else if (n === 'draw') tone(330, 0, .1, 'square', .05);
+  else if (n === 'flip') tone(700, 0, .04, 'square', .05);
+  else if (n === 'declare') { tone(98, 0, .5, 'sawtooth', .12, 60); tone(1180, .05, .3, 'sine', .05); }
+  else if (n === 'beat') { tone(52, 0, .09, 'sine', .22); tone(52, .16, .07, 'sine', .16); }
+  else if (n === 'gameover') [392, 311, 233, 196].forEach((f, i) => tone(f, i * .16, .3, 'sawtooth', .1));
+  else if (n === 'gamewin') [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, i * .09, .3, 'triangle', .13));
+}
+function toggleSnd() { store.snd = store.snd === false; save();
+  $('sndbtn').textContent = store.snd === false ? '🔇 効果音: OFF' : '🔊 効果音: ON'; }
+if (store.snd === false) $('sndbtn').textContent = '🔇 効果音: OFF';
+
+// ---------- boss dialogue ----------
+const TALK = {
+  deku: { think: ['「え、えっと……たぶん……」', '「か、数だけは数えてます……」'],
+          win: ['「や、やった！合ってた！」'], lose: ['「うぅ、外れました……」'], draw: ['「あ、あいこ……」'],
+          declare: ['「こ、これは……読めた気がします！」'],
+          mwin: ['「ぼ、ぼくが勝っちゃいました……ごめんなさい！」'], mlose: ['「つ、強すぎます……」'] },
+  satori: { think: ['「さて、あなたの番だ」', '「データが増えるほど、私は正確になる」', '「……ふむ、面白いパターンだ」'],
+          win: ['「読み通りです」', '「あなたの癖が教えてくれました」'], lose: ['「ほう……予測を外しますか」', '「いい手だ。だが次は読む」'], draw: ['「様子見ですか」'],
+          declare: ['「——見えた。ヨミキリ宣言です」'],
+          mwin: ['「学習の勝利です。あなたの癖、いただきました」'], mlose: ['「完敗です。あなた、乱数より読めない」'] },
+  laplace: { think: ['「早く出せ。結果は変わらん」', '「お前の癖は、前の対戦から知っている」', '「ざわ……とでも言ってほしいか？」'],
+          win: ['「知っていた」', '「何度やっても同じだ」'], lose: ['「……ほう。記憶にない打ち筋だ」', '「面白い。それも覚えた」'], draw: ['「時間の無駄だな」'],
+          declare: ['「——ヨミキリ。逃げ場はない」'],
+          mwin: ['「これで全部お前のデータだ。また来い」'], mlose: ['「……認めよう。今日のお前は読めなかった」'] }
+};
+function talk(kind) { const a = TALK[bossKey][kind]; return a[Math.floor(rng() * a.length)]; }
+
+// ---------- match state ----------
+let bossKey = 'deku', boss = null, st = null, model = null, bank = [];
+let pChips = 10, aChips = 10, carry = 0, bet = 1, round = 0;
+let pred = null, declared = false, yomiText = '', heartbeat = null;
+let roundAiMove = -1, commitStr = '', commitHash = '';
+function makeNonce() {
+  const b = new Uint8Array(16);
+  (window.crypto || {}).getRandomValues ? crypto.getRandomValues(b)
+    : b.forEach((_, i) => b[i] = Math.floor(rng() * 256));
+  return Array.from(b, v => ('0' + v.toString(16)).slice(-2)).join('');
+}
+
+function loadLaplace() {
+  const s = store.laplace;
+  if (s && s.W) { model = s.W; bank = s.bank.map(b => ({ x: Float64Array.from(b.x), y: b.y })); }
+  else { model = Y.newModel(16, (Date.now() % 100000) + 7); bank = []; }
+}
+function saveLaplace() {
+  if (bossKey !== 'laplace') return;
+  store.laplace = { W: model, bank: bank.slice(-240).map(b => ({ x: Array.from(b.x, v => Math.round(v * 1000) / 1000), y: b.y })) };
+  save();
+}
+function resetLaplace() { delete store.laplace; delete store.rec.laplace; save(); renderTitle();
+  $('lapreset').textContent = '😈 記憶を消した'; setTimeout(() => $('lapreset').textContent = '😈 ラプラスの記憶を消す', 1800); }
+
+function renderTitle() {
+  for (const k of ['deku', 'satori', 'laplace']) {
+    const r = store.rec[k] || { w: 0, l: 0 };
+    $('rec-' + k).textContent = (r.w + r.l) ? `${r.w}勝${r.l}敗` : '';
+  }
+  const dekuW = (store.rec.deku || {}).w || 0, satoW = (store.rec.satori || {}).w || 0;
+  $('btn-satori').disabled = dekuW < 1; $('btn-satori').classList.toggle('locked', dekuW < 1);
+  if (dekuW < 1) $('btn-satori').title = 'デクに勝つと解放';
+  $('btn-laplace').disabled = satoW < 1; $('btn-laplace').classList.toggle('locked', satoW < 1);
+  if (satoW < 1) $('btn-laplace').title = 'サトリに勝つと解放';
+}
+renderTitle(); renderCfg();
+
+function show(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('on')); $(id).classList.add('on'); }
+
+function startMatch(key) {
+  bossKey = key; boss = Y.BOSSES[key];
+  st = store.cfg.deal === 'random'
+    ? Y.newMatchState(Y.randomDeal(rng), Y.randomDeal(rng))
+    : Y.newMatchState();
+  pChips = 10; aChips = 10; carry = 0; round = 0;
+  $('roundmax').textContent = store.cfg.rounds;
+  if (key === 'laplace') loadLaplace();
+  else if (boss.hn > 0) { model = Y.newModel(boss.hn, (Date.now() % 100000) + 11); bank = []; }
+  else model = null;
+  $('bossname').textContent = boss.name;
+  $('bossbubble').textContent = boss.intro;
+  $('yomibox').textContent = '';
+  show('scr-match');
+  startRound();
+}
+
+function renderState() {
+  $('roundno').textContent = round + 1;
+  $('pchips').textContent = pChips; $('achips').textContent = aChips;
+  $('pot').textContent = carry ? `${bet * 2 + carry}（持越込）` : bet * 2;
+  $('aicards').innerHTML = 'AIの残り札: ' + [0, 1, 2].map(m => `${Y.EMO[m]}×${st.aCards[m]}`).join('　');
+  for (let m = 0; m < 3; m++) {
+    const b = $('c' + m);
+    b.querySelector('small').textContent = `${Y.MOVES[m]} ×${st.pCards[m]}`;
+    b.disabled = st.pCards[m] <= 0 || phase !== 'input';
+  }
+  const maxBet = Math.max(1, Math.min(3, pChips, aChips));
+  for (let x = 1; x <= 3; x++) { $('bet' + x).disabled = x > maxBet || phase !== 'input';
+    $('bet' + x).classList.toggle('sel', x === bet); }
+}
+let phase = 'input';
+function setBet(x) { bet = x; renderState(); snd('flip'); }
+
+function startRound() {
+  phase = 'input';
+  bet = Math.min(bet, Math.max(1, Math.min(3, pChips, aChips)));
+  pred = boss.hn === 0 ? Y.predictFreq(st) : Y.predictNN(model, st);
+  declared = Y.shouldDeclare(st, pred, boss);
+  yomiText = Y.explain(st, pred); // committed now, revealed after the round (honest)
+  // commit-reveal: AI's card AND its read are decided & sealed BEFORE you choose
+  roundAiMove = Y.aiChoose(st, pred, rng);
+  commitStr = `R${round + 1}|ai:${roundAiMove}|yomi:${pred.move}|conf:${Math.round(pred.conf * 100)}|n:${makeNonce()}`;
+  commitHash = sha256hex(commitStr);
+  $('commitbox').textContent = '🔒 ' + commitHash;
+  $('reveal').innerHTML = '<span class="vs">— 手を選べ —</span>';
+  $('resline').textContent = ''; $('resline').className = 'resline';
+  $('nextbtn').style.display = 'none';
+  document.body.classList.toggle('declared', declared);
+  if (declared) {
+    $('bossbubble').innerHTML = `<b>${talk('declare')}</b>`;
+    $('bossbubble').classList.add('declare');
+    snd('declare');
+    heartbeat = setInterval(() => snd('beat'), 900);
+  } else {
+    $('bossbubble').textContent = talk('think');
+    $('bossbubble').classList.remove('declare');
+  }
+  $('yomibox').textContent = declared ? '⚠ ヨミキリ宣言中——的中で敗けると+2、裏をかいて勝てば+2' : '';
+  renderState();
+}
+
+function playCard(m) {
+  if (phase !== 'input' || st.pCards[m] <= 0) return;
+  phase = 'reveal';
+  if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+  document.body.classList.remove('declared');
+  const aMove = roundAiMove; // sealed at round start (commit-reveal)
+  const x = pred.x || null;
+  const result = Y.updateAfterRound(st, m, aMove);
+  if (boss.hn > 0) Y.learn(model, st, x, m, boss.hp, boss.persist ? bank : null);
+  if (boss.persist && x) { bank.push({ x, y: m }); if (bank.length > 240) bank.shift(); saveLaplace(); }
+  // economy (identical to sim_balance.js)
+  const pot = bet * 2 + carry; carry = 0;
+  const hit = pred.move === m;
+  let extra = '';
+  if (result === 'draw') { carry = pot; snd('draw'); }
+  else if (result === 'win') {
+    pChips += pot - bet; aChips -= bet;
+    if (declared && !hit && aChips > 0) { const e = Math.min(2, aChips); pChips += e; aChips -= e;
+      extra = `　💥裏をかいた！+${e}`; }
+    snd('win');
+  } else {
+    aChips += pot - bet; pChips -= bet;
+    if (declared && hit && pChips > 0) { const e = Math.min(2, pChips); aChips += e; pChips -= e;
+      extra = `　🩸ヨミキリ成立…−${e}`; }
+    snd('lose');
+  }
+  snd('flip');
+  $('reveal').innerHTML = `<span>${Y.EMO[m]}</span><span class="vs">VS</span><span>${Y.EMO[aMove]}</span>`;
+  const rl = $('resline');
+  if (result === 'win') { rl.textContent = `勝ち！ ポット${pot}枚を獲得${extra}`; rl.className = 'resline w'; }
+  else if (result === 'lose') { rl.textContent = `負け… ${extra || 'ベットを失った'}`; rl.className = 'resline l'; }
+  else { rl.textContent = `あいこ——ポット${pot}枚は持ち越し（札だけ減った）`; rl.className = 'resline d'; }
+  $('bossbubble').textContent = talk(result === 'win' ? 'lose' : result === 'lose' ? 'win' : 'draw');
+  $('yomibox').innerHTML = `🔍 AIの読み: <b>${Y.MOVES[pred.move]}</b>（確信${Math.round(pred.conf * 100)}%${declared ? '・宣言' : ''}・${hit ? '的中' : 'ハズレ'}）<br>${yomiText}`;
+  $('commitbox').textContent = `🔓 ${commitStr}`;
+  round++;
+  renderState();
+  if (pChips <= 0 || aChips <= 0 || round >= store.cfg.rounds) { setTimeout(endMatch, 1400); }
+  else { $('nextbtn').style.display = ''; }
+}
+function nextRound() { startRound(); }
+function giveUp() { pChips = 0; endMatch(); }
+
+function endMatch() {
+  if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+  document.body.classList.remove('declared');
+  const win = pChips > aChips;
+  const rec = store.rec[bossKey] || { w: 0, l: 0 };
+  if (win) rec.w++; else rec.l++;
+  store.rec[bossKey] = rec; save();
+  saveLaplace();
+  snd(win ? 'gamewin' : 'gameover');
+  $('res-title').textContent = win ? '🏆 勝利' : '💀 敗北';
+  $('res-title').style.color = win ? 'var(--gold)' : 'var(--red)';
+  $('res-body').innerHTML =
+    `あなた <b style="color:var(--gold)">${pChips}</b>枚 ／ ${boss.name} <b>${aChips}</b>枚<br>` +
+    `<span style="color:var(--sub);font-size:13px">${talk(win ? 'mlose' : 'mwin')}</span>` +
+    (bossKey === 'laplace' ? `<br><span style="color:#ffb0b0;font-size:13px">こいつはこの対戦も記憶した。次は今日のあなたの癖まで読んでくる</span>` : '');
+  renderHabits();
+  show('scr-result');
+  renderTitle();
+}
+
+function renderHabits() {
+  const s = st.stats, tot = s.moves[0] + s.moves[1] + s.moves[2];
+  const rows = [];
+  if (tot > 0) {
+    let k = 0; for (let m = 1; m < 3; m++) if (s.moves[m] > s.moves[k]) k = m;
+    rows.push(['最も出した手', `${Y.MOVES[k]}（${Math.round(s.moves[k] / tot * 100)}%）`]);
+  }
+  if (s.lossN >= 2) rows.push(['負けた直後に手を変える率', `${Math.round(s.lossChanged / s.lossN * 100)}%（${s.lossN}回中）`]);
+  let bestPat = null;
+  for (let a = 0; a < 3; a++) { const row = s.trans1[a], t = row[0] + row[1] + row[2];
+    if (t >= 3) { let k = 0; for (let m = 1; m < 3; m++) if (row[m] > row[k]) k = m;
+      const r = row[k] / t; if (!bestPat || r > bestPat.r) bestPat = { a, k, r, t }; } }
+  if (bestPat && bestPat.r >= 0.5)
+    rows.push(['最強のクセ', `${Y.MOVES[bestPat.a]}の後に${Y.MOVES[bestPat.k]}（${Math.round(bestPat.r * 100)}%・${bestPat.t}回中）`]);
+  const n = st.pHist.length;
+  let hits = 0, decl = 0, declHit = 0;
+  rows.push(['ラウンド数', `${n}`]);
+  $('habits').innerHTML = rows.map(r => `<tr><td style="color:var(--sub)">${r[0]}</td><td><b>${r[1]}</b></td></tr>`).join('');
+  window._habitsText = rows.map(r => `${r[0]}: ${r[1]}`).join(' / ');
+}
+function copyHabits() {
+  const t = `🃏ヨミキリ（AIがあなたの癖を学習する限定ジャンケン）で${$('res-title').textContent.includes('勝利') ? '勝った' : '負けた'}。AIに暴かれた俺の癖 → ${window._habitsText}\nhttps://d-studylab.github.io/yomikiri/`;
+  navigator.clipboard && navigator.clipboard.writeText(t);
+  $('copied').textContent = 'コピーしました';
+}
+function rematch() { startMatch(bossKey); }
+</script>
+</body>
+</html>
