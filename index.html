@@ -498,11 +498,13 @@ window.DSL_SOUND_BGM_ONLY = true;
 (function (global) {
   "use strict";
 
-  var KEY = "dsl_sound_v1";
-  // 2026-08-16 本人から「音は小さいくらい」と指摘があり 0.35 → 0.6 に上げた。
-  // BGM の初期値はページ側で決める（ゲーム=オン／読み物のサイト=オフ）。
-  // 読み物のページで勝手に音楽が鳴るのは邪魔なので、そこだけは分ける。
-  var st = { vol: 0.6, mute: false, bgm: global.DSL_BGM_DEFAULT === true };
+  var KEY = "dsl_sound_v2";     // ⚠ v1 の小さい音量が保存されているので、キーごと切り替える
+  // 音量の履歴（2026-08-16）
+  //   初版 0.35 → 「小さい」と指摘され 0.6 → **それでもBGMは全く聞こえない**と再指摘。
+  //   実効値を計算したら BGM は 0.6(master) × 0.28(musGain) × 0.10(1音) ≒ **0.017**。
+  //   -35dB 相当で、聞こえないのが当たり前だった。掛け算で3段構えなのを見落としていた。
+  //   → 3段とも上げる。代わりに master の手前にコンプレッサを入れて歪みを防ぐ。
+  var st = { vol: 0.85, mute: false, bgm: global.DSL_BGM_DEFAULT === true };
   try {
     var raw = localStorage.getItem(KEY);
     if (raw) {
@@ -515,6 +517,7 @@ window.DSL_SOUND_BGM_ONLY = true;
   function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} }
 
   var ctx = null, master = null, sfxGain = null, musGain = null, noise = null;
+  var outNode = null;   // 実際にスピーカーへ出る直前。測るならここ（master ではない）
   var bgmTimer = null, bgmStep = 0, bgmNext = 0;
 
   function level() { return st.mute ? 0.0001 : Math.max(0.0001, st.vol); }
@@ -524,9 +527,35 @@ window.DSL_SOUND_BGM_ONLY = true;
     var AC = global.AudioContext || global.webkitAudioContext;
     if (!AC) return false;                      // 音が出せない環境。黙って諦める
     try { ctx = new AC(); } catch (e) { return false; }
-    master = ctx.createGain(); master.gain.value = level(); master.connect(ctx.destination);
-    sfxGain = ctx.createGain(); sfxGain.gain.value = 0.9; sfxGain.connect(master);
-    musGain = ctx.createGain(); musGain.gain.value = 0.28; musGain.connect(master);
+
+    // 音を大きくすると、同時に鳴ったときに 1.0 を超えて歪む。
+    // コンプレッサを最後に挟んで、突き抜けたぶんだけ抑える。
+    // ⚠ ただし**抑えすぎると今度は全体が小さくなる**。実測したら効果音のピークが
+    //    0.3 前後で頭打ちになっていた（threshold -12 / ratio 6 が効きすぎ）。
+    //    上限を上げ、圧縮で下がったぶんを後段の makeup で戻す。
+    //    最大入力でも 0.9 程度に収まる計算なので、割れない。
+    var comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -8; comp.knee.value = 12;
+    comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
+    var makeup = ctx.createGain(); makeup.gain.value = 1.35;
+
+    // ⚠ makeup で持ち上げると、**同時に鳴ったときだけ 1.0 を超える**。
+    //    実測で BGM＋win＋win＋ok が重なったとき peak 1.47 になり、そこで音が割れていた
+    //    （2026-08-16）。ふだんは鳴らないので、耳で気づきにくい壊れ方。
+    //    最後に「これ以上は絶対に出さない」段を置く。
+    var limiter = ctx.createDynamicsCompressor();
+    // 先読みができないので、立ち上がりの一瞬はどうしても抜ける。
+    // 抜けても 1.0 を超えないよう、上限を低めに取って反応を最速にする。
+    limiter.threshold.value = -3; limiter.knee.value = 0;
+    limiter.ratio.value = 20; limiter.attack.value = 0.001; limiter.release.value = 0.08;
+
+    comp.connect(makeup); makeup.connect(limiter); limiter.connect(ctx.destination);
+    outNode = limiter;
+
+    master = ctx.createGain(); master.gain.value = level(); master.connect(comp);
+    sfxGain = ctx.createGain(); sfxGain.gain.value = 1.0; sfxGain.connect(master);
+    // BGM は効果音より小さくするが、**聞こえない小ささにはしない**（前回の失敗）
+    musGain = ctx.createGain(); musGain.gain.value = 0.75; musGain.connect(master);
     var n = Math.floor(ctx.sampleRate * 0.6);
     noise = ctx.createBuffer(1, n, ctx.sampleRate);
     var d = noise.getChannelData(0);
@@ -575,33 +604,35 @@ window.DSL_SOUND_BGM_ONLY = true;
   }
 
   /* ── 効果音（ここを各ゲームから呼ぶ） ───────────────── */
+  // ⚠ 1音ずつの値は 2026-08-16 に約2.5倍にした。前の値では
+  //    master を上げても「少し聞こえる」止まりだった（本人の指摘）。
   var SND = {
-    /** ボタンを押した。いちばん多く鳴るので、短く・小さく */
-    click: function () { tone("triangle", 660, 620, 0.05, 0.16); },
+    /** ボタンを押した。いちばん多く鳴るので、短く。ただし聞こえる大きさで */
+    click: function () { tone("triangle", 660, 620, 0.05, 0.40); },
     /** 選択・切り替え */
-    tick:  function () { tone("square", 880, 880, 0.035, 0.10); },
+    tick:  function () { tone("square", 880, 880, 0.035, 0.28); },
     /** 正解・成功 */
-    ok:    function () { tone("triangle", 660, 660, 0.09, 0.22);
-                         tone("triangle", 990, 990, 0.14, 0.20, 0.08); },
+    ok:    function () { tone("triangle", 660, 660, 0.09, 0.55);
+                         tone("triangle", 990, 990, 0.14, 0.50, 0.08); },
     /** 不正解・失敗 */
-    ng:    function () { tone("sawtooth", 220, 150, 0.20, 0.16); hit(0.14, 0.10, 900); },
+    ng:    function () { tone("sawtooth", 220, 150, 0.20, 0.40); hit(0.14, 0.26, 900); },
     /** 開始 */
-    start: function () { tone("triangle", 523, 523, 0.08, 0.20);
-                         tone("triangle", 784, 784, 0.13, 0.20, 0.08); },
+    start: function () { tone("triangle", 523, 523, 0.08, 0.50);
+                         tone("triangle", 784, 784, 0.13, 0.50, 0.08); },
     /** 勝ち・完了（ドミソド） */
     win:   function () {
       [523, 659, 784, 1047].forEach(function (f, i) {
-        tone("triangle", f, f, i === 3 ? 0.34 : 0.12, 0.20, i * 0.09);
+        tone("triangle", f, f, i === 3 ? 0.34 : 0.12, 0.50, i * 0.09);
       });
     },
     /** 負け・終了 */
     lose:  function () {
       [392, 330, 262].forEach(function (f, i) {
-        tone("sine", f, f, i === 2 ? 0.42 : 0.15, 0.18, i * 0.13);
+        tone("sine", f, f, i === 2 ? 0.42 : 0.15, 0.48, i * 0.13);
       });
     },
     /** 数値がカウントアップしている間などの粒 */
-    blip:  function () { tone("square", 1200, 1200, 0.02, 0.06); },
+    blip:  function () { tone("square", 1200, 1200, 0.02, 0.18); },
 
     /* ── 設定 ── */
     get volume() { return st.vol; },
@@ -615,6 +646,38 @@ window.DSL_SOUND_BGM_ONLY = true;
       if (master) master.gain.value = level();
     },
     toggle: function () { SND.muted = !st.mute; return st.mute; },
+
+    /** 実際に出ている音の大きさを測る（0〜1のRMS）。
+        ⚠ 音量は master × 系統 × 1音 の**掛け算**なので、値を見ただけでは
+           聞こえるかどうか分からない。2026-08-16 に
+           「0.6 に上げたのにBGMが全く聞こえない」を実効値 0.017 で説明できた。
+           以後は耳で確かめられない側（AI）が**数字で確かめる**ために使う。
+        使い方: await SND.measure(1500) → {rms, peak} */
+    measure: function (ms) {
+      if (!ready()) return Promise.resolve({ rms: 0, peak: 0, note: "音を出せません" });
+      var an = ctx.createAnalyser();
+      an.fftSize = 2048;
+      // ⚠ master ではなく**出力の直前**を測る。master を測ると、その後ろの
+      //    コンプレッサで実際どれだけ絞られているかが見えない（2026-08-16 に一度間違えた）。
+      outNode.connect(an);                      // 出力はそのまま、分岐して覗くだけ
+      var buf = new Float32Array(an.fftSize);
+      var sum = 0, n = 0, peak = 0;
+      return new Promise(function (res) {
+        var t = setInterval(function () {
+          an.getFloatTimeDomainData(buf);
+          for (var i = 0; i < buf.length; i++) {
+            var v = Math.abs(buf[i]);
+            sum += v * v; n++;
+            if (v > peak) peak = v;
+          }
+        }, 30);
+        setTimeout(function () {
+          clearInterval(t);
+          try { outNode.disconnect(an); } catch (e) {}
+          res({ rms: Math.sqrt(sum / Math.max(1, n)), peak: peak });
+        }, ms || 1200);
+      });
+    },
 
     /* ── BGM（呼んだゲームだけ鳴る。既定オフ） ── */
     bgmOn: function () { st.bgm = true; save(); if (ready()) startBgm(); },
@@ -650,8 +713,10 @@ window.DSL_SOUND_BGM_ONLY = true;
         // 小節の後半だけ1つ上のオクターブを混ぜる。
         var idx = [0, 1, 2, 1, 2, 0, 1, 2][beat];
         var f = ch[idx] * (beat >= 5 ? 2 : 1);
-        voice("sine", f, bgmNext, STEP * 1.7, 0.10);
-        if (beat === 0 || beat === 4) voice("triangle", BASS[bar], bgmNext, STEP * 2.4, 0.075);
+        // ⚠ 前は 0.10 / 0.075。master と musGain の掛け算で ≒0.017 になり、
+        //    **まったく聞こえなかった**。三角波にして倍音を足し、値も上げた。
+        voice("triangle", f, bgmNext, STEP * 1.7, 0.34);
+        if (beat === 0 || beat === 4) voice("sine", BASS[bar], bgmNext, STEP * 2.4, 0.40);
         bgmNext += STEP; bgmStep++;
       }
     }, 120);
