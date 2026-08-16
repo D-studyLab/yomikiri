@@ -474,5 +474,318 @@ function rematch() { startMatch(bossKey); }
 </section>
 
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "cc32ae35428c4eb7a7c645b45bf26308"}'></script><!-- End Cloudflare Web Analytics -->
+<script id="dsl-sound">
+window.DSL_BGM_DEFAULT = true;
+window.DSL_SOUND_BGM_ONLY = true;
+/* ════════════════════════════════════════════════════════════════════
+   D-studyLab 共通サウンド（効果音＋任意でBGM）
+   2026-08-16 作成 ／ 正本 = _Tools/_shared/sound.js
+   各ゲームへは _Tools/_shared/inject_sound.py で **インライン展開**して入れる。
+
+   ■ なぜ外部ファイルにしないか
+     ゲームは1リポジトリ1ファイル（index.html だけ）で配信している。
+     外部JSを足すと、オフラインで開けない・CDNが要る・キャッシュがずれる。
+     避難ランが 2026-08-10 に Web Audio API の合成だけで音を実装しており、
+     それが問題なく動いているので、同じ方針にそろえる。
+
+   ■ 守っていること
+     ・AudioContext は **最初のユーザー操作まで作らない**（自動再生ブロック対策）
+     ・音量とミュートは localStorage に保存し、次回も引き継ぐ
+     ・**BGMは既定オフ、効果音は既定オン。** 効果音はユーザーの操作でしか鳴らないので
+       いきなり音が出て驚かせることがない。BGMは勝手に鳴ると嫌われるので自分で入れてもらう
+     ・音を出せない環境（AudioContext が無い等）でも、**何も壊れない**
+   ════════════════════════════════════════════════════════════════════ */
+(function (global) {
+  "use strict";
+
+  var KEY = "dsl_sound_v1";
+  // 2026-08-16 本人から「音は小さいくらい」と指摘があり 0.35 → 0.6 に上げた。
+  // BGM の初期値はページ側で決める（ゲーム=オン／読み物のサイト=オフ）。
+  // 読み物のページで勝手に音楽が鳴るのは邪魔なので、そこだけは分ける。
+  var st = { vol: 0.6, mute: false, bgm: global.DSL_BGM_DEFAULT === true };
+  try {
+    var raw = localStorage.getItem(KEY);
+    if (raw) {
+      var o = JSON.parse(raw);
+      if (typeof o.vol === "number" && isFinite(o.vol)) st.vol = Math.min(1, Math.max(0, o.vol));
+      if (typeof o.mute === "boolean") st.mute = o.mute;
+      if (typeof o.bgm === "boolean") st.bgm = o.bgm;
+    }
+  } catch (e) {}
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} }
+
+  var ctx = null, master = null, sfxGain = null, musGain = null, noise = null;
+  var bgmTimer = null, bgmStep = 0, bgmNext = 0;
+
+  function level() { return st.mute ? 0.0001 : Math.max(0.0001, st.vol); }
+
+  function init() {
+    if (ctx) return true;
+    var AC = global.AudioContext || global.webkitAudioContext;
+    if (!AC) return false;                      // 音が出せない環境。黙って諦める
+    try { ctx = new AC(); } catch (e) { return false; }
+    master = ctx.createGain(); master.gain.value = level(); master.connect(ctx.destination);
+    sfxGain = ctx.createGain(); sfxGain.gain.value = 0.9; sfxGain.connect(master);
+    musGain = ctx.createGain(); musGain.gain.value = 0.28; musGain.connect(master);
+    var n = Math.floor(ctx.sampleRate * 0.6);
+    noise = ctx.createBuffer(1, n, ctx.sampleRate);
+    var d = noise.getChannelData(0);
+    for (var i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    if (st.bgm) startBgm();
+    return true;
+  }
+
+  function ready() {
+    if (!init()) return false;
+    if (ctx.state === "suspended") { try { ctx.resume(); } catch (e) {} }
+    return true;
+  }
+
+  /* ── 部品 ───────────────────────────────────────────── */
+
+  /** 単音。type=波形, f0→f1 に滑らせる, dur秒, vol は 0..1 */
+  function tone(type, f0, f1, dur, vol, delay) {
+    if (!ready()) return;
+    var t = ctx.currentTime + (delay || 0);
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+    // クリックノイズを避けるため、頭に短い立ち上がりを付ける
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0001, vol), t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(sfxGain);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+
+  /** ノイズ系（打撃・失敗音） */
+  function hit(dur, vol, cut, delay) {
+    if (!ready()) return;
+    var t = ctx.currentTime + (delay || 0);
+    var s = ctx.createBufferSource(); s.buffer = noise;
+    var f = ctx.createBiquadFilter(); f.type = "lowpass";
+    f.frequency.setValueAtTime(cut || 1800, t);
+    f.frequency.exponentialRampToValueAtTime(200, t + dur);
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(Math.max(0.0001, vol), t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(sfxGain);
+    s.start(t); s.stop(t + dur + 0.02);
+  }
+
+  /* ── 効果音（ここを各ゲームから呼ぶ） ───────────────── */
+  var SND = {
+    /** ボタンを押した。いちばん多く鳴るので、短く・小さく */
+    click: function () { tone("triangle", 660, 620, 0.05, 0.16); },
+    /** 選択・切り替え */
+    tick:  function () { tone("square", 880, 880, 0.035, 0.10); },
+    /** 正解・成功 */
+    ok:    function () { tone("triangle", 660, 660, 0.09, 0.22);
+                         tone("triangle", 990, 990, 0.14, 0.20, 0.08); },
+    /** 不正解・失敗 */
+    ng:    function () { tone("sawtooth", 220, 150, 0.20, 0.16); hit(0.14, 0.10, 900); },
+    /** 開始 */
+    start: function () { tone("triangle", 523, 523, 0.08, 0.20);
+                         tone("triangle", 784, 784, 0.13, 0.20, 0.08); },
+    /** 勝ち・完了（ドミソド） */
+    win:   function () {
+      [523, 659, 784, 1047].forEach(function (f, i) {
+        tone("triangle", f, f, i === 3 ? 0.34 : 0.12, 0.20, i * 0.09);
+      });
+    },
+    /** 負け・終了 */
+    lose:  function () {
+      [392, 330, 262].forEach(function (f, i) {
+        tone("sine", f, f, i === 2 ? 0.42 : 0.15, 0.18, i * 0.13);
+      });
+    },
+    /** 数値がカウントアップしている間などの粒 */
+    blip:  function () { tone("square", 1200, 1200, 0.02, 0.06); },
+
+    /* ── 設定 ── */
+    get volume() { return st.vol; },
+    set volume(v) {
+      st.vol = Math.min(1, Math.max(0, v)); save();
+      if (master) master.gain.value = level();
+    },
+    get muted() { return st.mute; },
+    set muted(m) {
+      st.mute = !!m; save();
+      if (master) master.gain.value = level();
+    },
+    toggle: function () { SND.muted = !st.mute; return st.mute; },
+
+    /* ── BGM（呼んだゲームだけ鳴る。既定オフ） ── */
+    bgmOn: function () { st.bgm = true; save(); if (ready()) startBgm(); },
+    bgmOff: function () { st.bgm = false; save(); stopBgm(); },
+    get bgmEnabled() { return st.bgm; },
+    _ready: ready,
+  };
+
+  /* ── BGM ──────────────────────────────────────────────
+     ずっと流れ続けるものなので、**飽きないことより、邪魔にならないこと**を優先する。
+     ・4小節で1周する和音進行の上を、分散和音がゆっくり動く
+     ・同じ音形の繰り返しにしない（メトロノームに聞こえると気が散る）
+     ・低音は2拍に1回だけ。音数を増やさない
+     ・効果音より明確に小さく（musGain 0.28 × 各音 0.10前後）
+     すべて合成なので音源ファイルは要らない。                      */
+  var CHORDS = [            // ドード / ラーミ / ファード / ソーシ（Cメジャーの定番進行）
+    [262, 330, 392], [220, 262, 330], [175, 262, 349], [196, 247, 392]
+  ];
+  var BASS = [131, 110, 175, 196];
+  var STEP = 0.34;          // 1音の長さ（秒）
+  var PER_BAR = 8;          // 1小節の音数
+
+  function startBgm() {
+    if (bgmTimer || !ctx) return;
+    bgmNext = ctx.currentTime + 0.15;
+    bgmTimer = setInterval(function () {
+      if (!ctx || !st.bgm) return;
+      while (bgmNext < ctx.currentTime + 0.5) {
+        var bar = Math.floor(bgmStep / PER_BAR) % CHORDS.length;
+        var beat = bgmStep % PER_BAR;
+        var ch = CHORDS[bar];
+        // 上っていって下りてくる（0,1,2,1,…）。単純な繰り返しに聞こえないよう、
+        // 小節の後半だけ1つ上のオクターブを混ぜる。
+        var idx = [0, 1, 2, 1, 2, 0, 1, 2][beat];
+        var f = ch[idx] * (beat >= 5 ? 2 : 1);
+        voice("sine", f, bgmNext, STEP * 1.7, 0.10);
+        if (beat === 0 || beat === 4) voice("triangle", BASS[bar], bgmNext, STEP * 2.4, 0.075);
+        bgmNext += STEP; bgmStep++;
+      }
+    }, 120);
+  }
+
+  function voice(type, f, at, dur, vol) {
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, at);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + 0.06);   // やわらかく入る
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    o.connect(g); g.connect(musGain);
+    o.start(at); o.stop(at + dur + 0.05);
+  }
+
+  function stopBgm() { if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; } }
+
+  /* ── 画面右下のボタン ─────────────────────────────
+     音そのものと BGM は別に切りたい（効果音は欲しいが音楽は要らない、が普通にある）。
+     なのでボタンを2つ出す。 */
+  function mkBtn(id, label) {
+    var b = document.createElement("button");
+    b.id = id;
+    b.type = "button";
+    b.setAttribute("aria-label", label);
+    b.style.cssText =
+      "position:fixed;z-index:2147483000;width:40px;height:40px;" +
+      "border-radius:50%;border:1px solid rgba(128,128,128,.45);cursor:pointer;" +
+      "background:rgba(20,20,20,.62);color:#fff;font-size:16px;line-height:1;" +
+      "display:flex;align-items:center;justify-content:center;padding:0;" +
+      "backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);opacity:.72";
+    b.addEventListener("mouseenter", function () { b.style.opacity = "1"; });
+    b.addEventListener("mouseleave", function () { b.style.opacity = ".72"; });
+    return b;
+  }
+
+  function mountToggle() {
+    if (document.getElementById("dslSndBtn") || document.getElementById("dslBgmBtn")) return;
+
+    // ⚠ すでに自前の効果音を持っているゲームでは、効果音のボタンを出さない。
+    //    こちらが足すのはBGMだけなので、🔊 を出すと「押しても効果音は消えない」ことになる。
+    var sfxOwn = global.DSL_SOUND_BGM_ONLY === true;
+
+    if (!sfxOwn) {
+      var b = mkBtn("dslSndBtn", "音のオン・オフ");
+      b.style.right = "12px"; b.style.bottom = "12px";
+      var paint = function () {
+        b.textContent = st.mute ? "🔇" : "🔊"; b.title = st.mute ? "音を出す" : "音を消す";
+      };
+      paint();
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        SND.toggle();
+        paint();
+        if (!st.mute) SND.click();
+      });
+      document.body.appendChild(b);
+    }
+
+    var m = mkBtn("dslBgmBtn", "BGMのオン・オフ");
+    m.style.right = "12px"; m.style.bottom = sfxOwn ? "12px" : "58px";
+    function paintM() {
+      m.textContent = st.bgm ? "🎵" : "🎼";
+      m.style.opacity = st.bgm ? ".85" : ".45";
+      m.title = st.bgm ? "BGMを止める" : "BGMを流す";
+    }
+    paintM();
+
+    m.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (st.mute) SND.muted = false;      // 消音のままBGMを入れても鳴らないので、一緒に戻す
+      st.bgm ? SND.bgmOff() : SND.bgmOn();
+      paintM();
+    });
+
+    document.body.appendChild(m);
+  }
+
+  /* ── 何もしなくてもボタンが鳴るようにしておく ─────────
+     各ゲームは作りがばらばらなので、まず「押したら鳴る」だけを
+     イベント委譲でまとめて付ける。ゲーム固有の音（正解・勝敗）は
+     そのゲームの中から SND.ok() などを呼んで足す。            */
+  var CLICKABLE = "button,[role=button],.btn,a[href],summary," +
+                  "input[type=button],input[type=submit],label,[onclick]";
+
+  /** これは押せるものか。
+      ⚠ セレクタだけでは足りない。モンティホールのドアのように
+         <div class="door"> に onclick を **JSから** 付けている作りが多く、
+         その場合 [onclick] 属性は無い。実際 2026-08-16 に取りこぼした。
+         → 祖先を数段さかのぼって、onclick を持つか cursor:pointer かで判断する。 */
+  function isClickable(t) {
+    if (t.closest(CLICKABLE)) return true;
+    for (var el = t, i = 0; el && el.nodeType === 1 && i < 5; el = el.parentElement, i++) {
+      if (el.onclick) return true;
+      try { if (getComputedStyle(el).cursor === "pointer") return true; } catch (e) {}
+    }
+    return false;
+  }
+
+  function autoWire() {
+    document.addEventListener("pointerdown", function (e) {
+      var t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest("#dslSndBtn")) return;                    // トグル自身は二重に鳴らさない
+      if (isClickable(t)) SND.click();
+    }, true);
+    document.addEventListener("keydown", function (e) {
+      if (e.repeat) return;
+      if (e.key === "Enter" || e.key === " ") SND.click();
+    }, true);
+  }
+
+  function boot() {
+    mountToggle();
+    // 自前の効果音を持っているゲームでは配線しない（押すたびに音が二重に鳴るため）
+    if (global.DSL_SOUND_BGM_ONLY !== true) autoWire();
+    // ⚠ BGM は既定オンでも、最初のユーザー操作までは AudioContext を作れない。
+    //    どこかを1回触った時点で鳴りはじめるよう、拾っておく。
+    if (st.bgm) {
+      var kick = function () {
+        ready();
+        document.removeEventListener("pointerdown", kick, true);
+        document.removeEventListener("keydown", kick, true);
+      };
+      document.addEventListener("pointerdown", kick, true);
+      document.addEventListener("keydown", kick, true);
+    }
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+
+  global.SND = SND;
+})(window);
+
+</script>
 </body>
 </html>
